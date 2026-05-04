@@ -46,4 +46,13 @@ return [
         'topup_template_image_url' => env('ABA_TOPUP_TEMPLATE_IMAGE_URL'),
     ],
 
+    'payway' => [
+        'base_url' => env('PAYWAY_BASE_URL', 'https://checkout-sandbox.payway.com.kh'),
+        'merchant_id' => env('PAYWAY_MERCHANT_ID'),
+        'api_key' => env('PAYWAY_API_KEY'),
+        'currency' => env('PAYWAY_CURRENCY', 'USD'),
+        'return_url' => env('PAYWAY_RETURN_URL'),
+        'payment_option' => env('PAYWAY_PAYMENT_OPTION'),
+    ],
+
 ];

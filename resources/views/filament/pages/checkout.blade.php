@@ -170,6 +170,7 @@
         }
         .aba-khqr-body { padding: .8rem .9rem 1rem; }
         .aba-khqr-merchant { font-size: .95rem; color: #6b7280; }
+        .aba-khqr-label { margin-top: .25rem; font-size: .72rem; text-transform: uppercase; letter-spacing: .15em; color: #9ca3af; }
         .aba-khqr-amount { margin-top: .15rem; font-size: 2rem; font-weight: 800; color: #111827; line-height: 1.05; }
         .aba-khqr-ccy { font-size: 1rem; color: #374151; font-weight: 700; margin-left: .3rem; }
         .aba-khqr-rule { border-top: 2px dashed #e5e7eb; margin: .7rem 0 .8rem; }
@@ -186,7 +187,21 @@
             padding: .35rem;
         }
         .aba-khqr-image { width: 100%; height: 100%; object-fit: contain; }
+        .aba-payway-embed { margin: 0 auto; width: 100%; }
+        .aba-payway-iframe {
+            width: 100%;
+            min-height: 420px;
+            border: 0;
+            border-radius: .9rem;
+            background: #ffffff;
+        }
         .aba-note { margin-top: .9rem; font-size: .88rem; color: #6b7280; line-height: 1.35; }
+        .aba-status { margin-top: .9rem; font-weight: 700; color: #111827; display: flex; align-items: center; gap: .5rem; }
+        .aba-status-pending { color: #f59e0b; }
+        .aba-status-approved { color: #10b981; }
+        .aba-status-spinner { display: inline-block; width: 1em; height: 1em; border: 2px solid #f59e0b; border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .aba-meta { margin-top: .25rem; font-size: .85rem; color: #6b7280; }
     </style>
 
     <div class="pos-shell">
@@ -268,7 +283,7 @@
             <div class="pos-panel-title">Payment method</div>
 
             <div class="pos-method-grid">
-                @foreach(['cash' => 'Cash', 'card' => 'Card', 'qr_code' => 'QR code'] as $val => $label)
+                @foreach(['cash' => 'Cash', 'card' => 'Card', 'qr_code' => 'ABA Pay & KHQR'] as $val => $label)
                     <button
                         type="button"
                         wire:click="$set('method', '{{ $val }}')"
@@ -353,50 +368,97 @@
             wire:click.self="cancelQrPrompt"
         >
             <div class="aba-modal-card">
-                @if($this->abaTopupTemplateUrl)
-                    <img src="{{ $this->abaTopupTemplateUrl }}" alt="ABA topup" style="width:100%;max-width:360px;margin:0 auto;border-radius:.75rem;">
-                @else
-                    <div class="aba-brand">ABA <span>PAY</span></div>
+                <div class="aba-brand">ABA <span>PAY</span></div>
 
+                @php
+                    $abaCurrency = $this->payway_payload['currency'] ?? config('services.aba.currency', 'USD');
+                    $abaMerchant = trim((string) config('services.aba.merchant_name', 'Salon Payment'));
+                @endphp
+
+                @if(!empty($this->payway_payload))
+                    <div class="aba-payway-embed" wire:poll.3s="refreshPaywayStatus" wire:ignore>
+                        <script>
+                            window.__paywayCheckoutInitiated = window.__paywayCheckoutInitiated || {};
+                            (function () {
+                                const tranId = @js($payway_tran_id);
+                                if (!tranId || window.__paywayCheckoutInitiated[tranId]) {
+                                    return;
+                                }
+                                window.__paywayCheckoutInitiated[tranId] = true;
+                                
+                                // Wait for AbaPayway to be defined
+                                const waitForAbaPayway = setInterval(function () {
+                                    if (typeof AbaPayway !== 'undefined') {
+                                        clearInterval(waitForAbaPayway);
+                                        
+                                        const payload = @json($this->payway_payload);
+                                        
+                                        // Callbacks
+                                        payload.onSuccess = function (response) {
+                                            console.log('PayWay Success:', response);
+                                            // Trigger payment verification
+                                            if (window.Livewire && window.Livewire.components) {
+                                                Livewire.dispatch('payment-success', {tranId: tranId});
+                                            }
+                                        };
+                                        
+                                        payload.onError = function (response) {
+                                            console.log('PayWay Error:', response);
+                                        };
+                                        
+                                        // Initiate checkout
+                                        AbaPayway.checkout(payload);
+                                    }
+                                }, 100);
+                                
+                                // Timeout after 5 seconds
+                                setTimeout(function () {
+                                    clearInterval(waitForAbaPayway);
+                                }, 5000);
+                            })();
+                        </script>
+                    </div>
+                @elseif($this->abaQrImageUrl || $this->abaTopupTemplateUrl)
                     <div class="aba-khqr-card">
-                        <div class="aba-khqr-head">KHQR</div>
+                        <div class="aba-khqr-head">Top up</div>
                         <div class="aba-khqr-body">
-                            <div class="aba-khqr-merchant">{{ config('services.aba.merchant_name', 'Salon Payment') }}</div>
+                            @if($abaMerchant !== '')
+                                <div class="aba-khqr-merchant">{{ $abaMerchant }}</div>
+                            @endif
+                            <div class="aba-khqr-label">Amount</div>
                             <div class="aba-khqr-amount">
-                                {{ number_format($this->total, 2) }}
-                                <span class="aba-khqr-ccy">{{ config('services.aba.currency', 'USD') }}</span>
+                                ${{ number_format($this->total, 2) }}
+                                <span class="aba-khqr-ccy">{{ $abaCurrency }}</span>
                             </div>
                             <div class="aba-khqr-rule"></div>
-                            <div class="aba-khqr-image-wrap">
-                                @if($this->qrImageUrl)
-                                    <img src="{{ $this->qrImageUrl }}" alt="KHQR" class="aba-khqr-image">
-                                @endif
-                            </div>
+                            @if($this->abaQrImageUrl)
+                                <div class="aba-khqr-image-wrap">
+                                    <img src="{{ $this->abaQrImageUrl }}" alt="ABA KHQR" class="aba-khqr-image">
+                                </div>
+                            @else
+                                <img src="{{ $this->abaTopupTemplateUrl }}" alt="ABA topup" style="width:100%;border-radius:.7rem;">
+                            @endif
                         </div>
-                    </div>
-
-                    <div class="aba-note">
-                        Scan with ABA Mobile or any other mobile banking app that supports KHQR.
                     </div>
                 @endif
 
-                @if($this->canOpenAbaLink)
-                    <div style="margin-top:.75rem;">
-                        <a
-                            href="{{ $this->abaDeepLink }}"
-                            target="_blank"
-                            rel="noopener"
-                            class="pos-btn"
-                            style="display:block;text-decoration:none;"
-                        >
-                            Open ABA payment link
-                        </a>
+                <div class="aba-note">
+                    Scan with ABA Mobile or any other mobile banking app that supports KHQR.
+                </div>
+
+                @if($payway_tran_id)
+                    <div class="aba-status" @class(['aba-status-pending' => $payway_status === 'PENDING', 'aba-status-approved' => $payway_status === 'APPROVED'])>
+                        @if($payway_status === 'PENDING')
+                            <span class="aba-status-spinner"></span>
+                        @endif
+                        Status: {{ $payway_status ?? 'PENDING' }}
                     </div>
+                    <div class="aba-meta">Transaction ID: {{ $payway_tran_id }}</div>
                 @endif
 
                 <div class="pos-bottom-grid" style="margin-top:1rem;">
-                    <button type="button" wire:click="confirmQrPaid" class="pos-confirm" style="margin-top:0;">
-                        Mark paid
+                    <button type="button" wire:click="refreshPaywayStatus" class="pos-confirm" style="margin-top:0;">
+                        Check payment status
                     </button>
                     <button type="button" wire:click="cancelQrPrompt" class="pos-btn">
                         Cancel
@@ -406,4 +468,5 @@
         </div>
     @endif
     </div>
+    <script src="https://checkout.payway.com.kh/plugins/checkout2-0.js" defer></script>
 </x-filament-panels::page>

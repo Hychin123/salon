@@ -4,6 +4,7 @@ namespace App\Filament\Pages;
 
 use App\Models\Appointment;
 use App\Models\Payment;
+use App\Services\PaywayService;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Illuminate\Database\Eloquent\Collection;
@@ -29,6 +30,10 @@ class Checkout extends Page
     public bool $use_loyalty_points = false;
     public int $loyalty_points_to_use = 0;
     public bool $showQrPrompt = false;
+    public ?string $payway_tran_id = null;
+    public ?string $payway_status = null;
+    public ?string $payway_apv = null;
+    public array $payway_payload = [];
 
     public function mount(): void
     {
@@ -41,7 +46,7 @@ class Checkout extends Page
 
         $firstAppointmentId = Appointment::query()
             ->whereIn('status', ['confirmed', 'in_progress', 'completed'])
-            ->whereDoesntHave('payment')
+            ->whereDoesntHave('payment', fn ($query) => $query->whereNotNull('paid_at'))
             ->orderByDesc('appt_date')
             ->orderByDesc('start_time')
             ->value('id');
@@ -56,7 +61,7 @@ class Checkout extends Page
         return Appointment::query()
             ->with(['client', 'staff', 'service'])
             ->whereIn('status', ['confirmed', 'in_progress', 'completed'])
-            ->whereDoesntHave('payment')
+            ->whereDoesntHave('payment', fn ($query) => $query->whereNotNull('paid_at'))
             ->orderByDesc('appt_date')
             ->orderByDesc('start_time')
             ->get();
@@ -151,7 +156,7 @@ class Checkout extends Page
             return;
         }
 
-        if ($this->appointment->payment()->exists()) {
+        if ($this->appointment->payment()->whereNotNull('paid_at')->exists()) {
             Notification::make()
                 ->title('This appointment is already paid.')
                 ->warning()
@@ -161,22 +166,60 @@ class Checkout extends Page
         }
 
         if ($this->method === 'qr_code') {
-            $this->showQrPrompt = true;
-
+            $this->startPaywayCheckout($this->appointment->payment);
             return;
         }
 
-        $this->finalizePayment();
+        $this->finalizePayment($this->appointment->payment);
     }
 
-    public function confirmQrPaid(): void
+    public function refreshPaywayStatus(): void
     {
-        if (! $this->appointment) {
+        if (! $this->appointment || ! $this->payway_tran_id) {
             return;
         }
 
-        $this->finalizePayment();
-        $this->showQrPrompt = false;
+        if (! $this->isPaywayConfigured()) {
+            Notification::make()
+                ->title('PayWay is not configured yet.')
+                ->danger()
+                ->send();
+
+            return;
+        }
+
+        try {
+            $response = app(PaywayService::class)->checkTransaction($this->payway_tran_id);
+        } catch (\RuntimeException $e) {
+            Notification::make()
+                ->title('Unable to check PayWay status.')
+                ->danger()
+                ->send();
+
+            return;
+        }
+
+        $payment = $this->appointment->payment;
+        if (! $payment) {
+            return;
+        }
+
+        $status = data_get($response, 'data.payment_status');
+        $statusCode = data_get($response, 'data.payment_status_code');
+        $apv = data_get($response, 'data.apv');
+
+        $payment->fill([
+            'payway_status' => $status,
+            'payway_apv' => $apv,
+        ])->save();
+
+        $this->payway_status = $status;
+        $this->payway_apv = $apv;
+
+        if ($status === 'APPROVED' || $statusCode === 0) {
+            $this->finalizePayment($payment);
+            $this->showQrPrompt = false;
+        }
     }
 
     public function cancelQrPrompt(): void
@@ -184,68 +227,131 @@ class Checkout extends Page
         $this->showQrPrompt = false;
     }
 
-    public function getQrImageUrlProperty(): ?string
+    #[\Livewire\Attributes\On('payment-success')]
+    public function onPaymentSuccess(array $data): void
     {
-        if (! $this->showQrPrompt) {
-            return null;
-        }
-
-        $customUrl = trim((string) config('services.aba.qr_image_url'));
-        if ($customUrl !== '') {
-            return $this->resolveImagePathToUrl($customUrl);
-        }
-
-        return 'https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=' . urlencode($this->abaDeepLink);
+        $this->refreshPaywayStatus();
     }
 
     public function getAbaTopupTemplateUrlProperty(): ?string
     {
-        $url = trim((string) config('services.aba.topup_hitemplate_image_url'));
+        $url = trim((string) config('services.aba.topup_template_image_url'));
 
         return $url !== '' ? $this->resolveImagePathToUrl($url) : null;
     }
 
-    public function getQrHintProperty(): string
+    public function getAbaQrImageUrlProperty(): ?string
     {
-        $merchant = trim((string) config('services.aba.merchant_name', 'Salon Payment'));
+        $url = trim((string) config('services.aba.qr_image_url'));
 
-        return "{$merchant} · USD " . number_format($this->total, 2);
+        return $url !== '' ? $this->resolveImagePathToUrl($url) : null;
     }
 
-    public function getAbaDeepLinkProperty(): string
+    public function getPaywayPurchaseUrlProperty(): string
     {
-        $base = trim((string) config('services.aba.deeplink_base', ''));
-        $merchantId = trim((string) config('services.aba.merchant_id'));
-        $account = trim((string) config('services.aba.account'));
-        $currency = trim((string) config('services.aba.currency', 'USD'));
-        $merchantName = trim((string) config('services.aba.merchant_name', 'Salon Payment'));
-        $txnId = 'APPT-' . ($this->appointment?->id ?? 'NA') . '-' . now()->format('YmdHis');
+        return app(PaywayService::class)->purchaseUrl();
+    }
 
-        if ($base === '') {
-            return '';
+    protected function startPaywayCheckout(?Payment $payment = null): void
+    {
+        if (! $this->appointment) {
+            return;
         }
 
-        $params = array_filter([
-            'amount' => number_format($this->total, 2, '.', ''),
-            'ccy' => $currency,
-            'merchant' => $merchantName,
-            'merchant_id' => $merchantId ?: null,
-            'account' => $account ?: null,
-            'memo' => 'Checkout #' . ($this->appointment?->id ?? ''),
-            'txn_id' => $txnId,
-        ], fn ($value) => filled($value));
+        if (! $this->isPaywayConfigured()) {
+            Notification::make()
+                ->title('PayWay is not configured yet.')
+                ->danger()
+                ->send();
 
-        return $base . (str_contains($base, '?') ? '&' : '?') . http_build_query($params);
+            return;
+        }
+
+        $payment = $payment ?: $this->appointment->payment;
+        $tranId = $payment?->payway_tran_id ?: $this->generatePaywayTranId();
+
+        if (! $payment) {
+            $payment = Payment::create([
+                'appointment_id' => $this->appointment->id,
+                'amount' => $this->total,
+                'tip' => round($this->tip, 2),
+                'method' => 'qr_code',
+                'payway_tran_id' => $tranId,
+                'payway_status' => 'PENDING',
+                'payway_requested_at' => now(),
+            ]);
+        } else {
+            $payment->fill([
+                'amount' => $this->total,
+                'tip' => round($this->tip, 2),
+                'method' => 'qr_code',
+                'payway_tran_id' => $tranId,
+                'payway_status' => $payment->payway_status ?: 'PENDING',
+                'payway_requested_at' => now(),
+            ])->save();
+        }
+
+        $this->payway_payload = $this->buildPaywayPayload($tranId);
+        $this->payway_tran_id = $tranId;
+        $this->payway_status = $payment->payway_status;
+        $this->payway_apv = $payment->payway_apv;
+        $this->showQrPrompt = true;
     }
 
-    public function getCanOpenAbaLinkProperty(): bool
+    protected function buildPaywayPayload(string $tranId): array
     {
-        $base = trim((string) config('services.aba.deeplink_base', ''));
+        $client = $this->appointment?->client;
+        [$firstName, $lastName] = $this->splitName((string) ($client?->name ?? ''));
+        $paymentOption = trim((string) config('services.payway.payment_option'));
+        if ($paymentOption === '') {
+            $paymentOption = 'abapay_khqr';
+        }
 
-        return $base !== '' && filled($this->abaDeepLink);
+        $payload = [
+            'req_time' => now()->format('YmdHis'),
+            'merchant_id' => trim((string) config('services.payway.merchant_id')),
+            'tran_id' => $tranId,
+            'amount' => number_format($this->total, 2, '.', ''),
+            'currency' => trim((string) config('services.payway.currency', 'USD')),
+            'payment_option' => $paymentOption,
+            'return_url' => trim((string) config('services.payway.return_url')),
+            'return_params' => 'appointment_id=' . $this->appointment?->id,
+            'firstname' => $firstName,
+            'lastname' => $lastName,
+            'phone' => $client?->phone,
+            'email' => $client?->email,
+        ];
+
+        return app(PaywayService::class)->buildPurchasePayload($payload);
     }
 
-    protected function finalizePayment(): void
+    protected function generatePaywayTranId(): string
+    {
+        $suffix = str_pad((string) ($this->appointment?->id ?? 0), 4, '0', STR_PAD_LEFT);
+
+        return now()->format('ymdHis') . $suffix;
+    }
+
+    protected function isPaywayConfigured(): bool
+    {
+        return filled(config('services.payway.merchant_id')) && filled(config('services.payway.api_key'));
+    }
+
+    protected function splitName(string $name): array
+    {
+        $parts = array_values(array_filter(preg_split('/\s+/', trim($name)) ?: []));
+
+        if ($parts === []) {
+            return ['', ''];
+        }
+
+        $first = array_shift($parts);
+        $last = implode(' ', $parts);
+
+        return [$first, $last];
+    }
+
+    protected function finalizePayment(?Payment $payment = null): void
     {
         if (! $this->appointment) {
             return;
@@ -254,13 +360,28 @@ class Checkout extends Page
         $client = $this->appointment->client;
         $loyaltyUsed = (int) $this->loyaltyDiscount;
 
-        Payment::create([
-            'appointment_id' => $this->appointment->id,
-            'amount' => $this->total,
-            'tip' => round($this->tip, 2),
-            'method' => $this->method,
-            'paid_at' => now(),
-        ]);
+        $method = $payment?->method ?? $this->method;
+
+        if (! $payment) {
+            $payment = Payment::create([
+                'appointment_id' => $this->appointment->id,
+                'amount' => $this->total,
+                'tip' => round($this->tip, 2),
+                'method' => $method,
+                'paid_at' => now(),
+                'payway_status' => $method === 'qr_code' ? ($this->payway_status ?: 'APPROVED') : null,
+                'payway_apv' => $this->payway_apv,
+            ]);
+        } else {
+            $payment->fill([
+                'amount' => $this->total,
+                'tip' => round($this->tip, 2),
+                'method' => $method,
+                'paid_at' => now(),
+                'payway_status' => $method === 'qr_code' ? ($this->payway_status ?: 'APPROVED') : $payment->payway_status,
+                'payway_apv' => $this->payway_apv ?: $payment->payway_apv,
+            ])->save();
+        }
 
         $this->appointment->update(['status' => 'completed']);
 
@@ -329,8 +450,12 @@ class Checkout extends Page
         $this->discount = 0;
         $this->use_loyalty_points = false;
         $this->loyalty_points_to_use = 0;
-        $this->method = 'cash';
+        $this->method = $this->appointment?->payment?->method ?? 'cash';
         $this->showQrPrompt = false;
+        $this->payway_tran_id = $this->appointment?->payment?->payway_tran_id;
+        $this->payway_status = $this->appointment?->payment?->payway_status;
+        $this->payway_apv = $this->appointment?->payment?->payway_apv;
+        $this->payway_payload = [];
     }
 
     protected function buildReceiptText(): string

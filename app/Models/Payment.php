@@ -12,12 +12,17 @@ class Payment extends Model
         'amount',
         'tip',
         'method',
+        'payway_tran_id',
+        'payway_status',
+        'payway_apv',
+        'payway_requested_at',
         'paid_at',
     ];
 
     protected $casts = [
         'amount' => 'decimal:2',
         'tip' => 'decimal:2',
+        'payway_requested_at' => 'datetime',
         'paid_at' => 'datetime',
     ];
 
