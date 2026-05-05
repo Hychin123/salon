@@ -196,6 +196,14 @@
             background: #ffffff;
         }
         .aba-note { margin-top: .9rem; font-size: .88rem; color: #6b7280; line-height: 1.35; }
+        .aba-error {
+            margin-top: .75rem;
+            font-size: .9rem;
+            color: #b91c1c;
+            background: #fee2e2;
+            border-radius: .6rem;
+            padding: .6rem .75rem;
+        }
         .aba-status { margin-top: .9rem; font-weight: 700; color: #111827; display: flex; align-items: center; gap: .5rem; }
         .aba-status-pending { color: #f59e0b; }
         .aba-status-approved { color: #10b981; }
@@ -362,111 +370,77 @@
         </div>
     </div>
 
-    @if($showQrPrompt)
+    @if($showQrPrompt && !empty($this->payway_payload))
         <div
-            class="aba-modal-bg"
-            wire:click.self="cancelQrPrompt"
-        >
-            <div class="aba-modal-card">
-                <div class="aba-brand">ABA <span>PAY</span></div>
-
-                @php
-                    $abaCurrency = $this->payway_payload['currency'] ?? config('services.aba.currency', 'USD');
-                    $abaMerchant = trim((string) config('services.aba.merchant_name', 'Salon Payment'));
-                @endphp
-
-                @if(!empty($this->payway_payload))
-                    <div class="aba-payway-embed" wire:poll.3s="refreshPaywayStatus" wire:ignore>
-                        <script>
-                            window.__paywayCheckoutInitiated = window.__paywayCheckoutInitiated || {};
-                            (function () {
-                                const tranId = @js($payway_tran_id);
-                                if (!tranId || window.__paywayCheckoutInitiated[tranId]) {
-                                    return;
-                                }
-                                window.__paywayCheckoutInitiated[tranId] = true;
-                                
-                                // Wait for AbaPayway to be defined
-                                const waitForAbaPayway = setInterval(function () {
-                                    if (typeof AbaPayway !== 'undefined') {
-                                        clearInterval(waitForAbaPayway);
-                                        
-                                        const payload = @json($this->payway_payload);
-                                        
-                                        // Callbacks
-                                        payload.onSuccess = function (response) {
-                                            console.log('PayWay Success:', response);
-                                            // Trigger payment verification
-                                            if (window.Livewire && window.Livewire.components) {
-                                                Livewire.dispatch('payment-success', {tranId: tranId});
-                                            }
-                                        };
-                                        
-                                        payload.onError = function (response) {
-                                            console.log('PayWay Error:', response);
-                                        };
-                                        
-                                        // Initiate checkout
-                                        AbaPayway.checkout(payload);
-                                    }
-                                }, 100);
-                                
-                                // Timeout after 5 seconds
-                                setTimeout(function () {
-                                    clearInterval(waitForAbaPayway);
-                                }, 5000);
-                            })();
-                        </script>
-                    </div>
-                @elseif($this->abaQrImageUrl || $this->abaTopupTemplateUrl)
-                    <div class="aba-khqr-card">
-                        <div class="aba-khqr-head">Top up</div>
-                        <div class="aba-khqr-body">
-                            @if($abaMerchant !== '')
-                                <div class="aba-khqr-merchant">{{ $abaMerchant }}</div>
-                            @endif
-                            <div class="aba-khqr-label">Amount</div>
-                            <div class="aba-khqr-amount">
-                                ${{ number_format($this->total, 2) }}
-                                <span class="aba-khqr-ccy">{{ $abaCurrency }}</span>
-                            </div>
-                            <div class="aba-khqr-rule"></div>
-                            @if($this->abaQrImageUrl)
-                                <div class="aba-khqr-image-wrap">
-                                    <img src="{{ $this->abaQrImageUrl }}" alt="ABA KHQR" class="aba-khqr-image">
-                                </div>
-                            @else
-                                <img src="{{ $this->abaTopupTemplateUrl }}" alt="ABA topup" style="width:100%;border-radius:.7rem;">
-                            @endif
-                        </div>
-                    </div>
-                @endif
-
-                <div class="aba-note">
-                    Scan with ABA Mobile or any other mobile banking app that supports KHQR.
-                </div>
-
-                @if($payway_tran_id)
-                    <div class="aba-status" @class(['aba-status-pending' => $payway_status === 'PENDING', 'aba-status-approved' => $payway_status === 'APPROVED'])>
-                        @if($payway_status === 'PENDING')
-                            <span class="aba-status-spinner"></span>
-                        @endif
-                        Status: {{ $payway_status ?? 'PENDING' }}
-                    </div>
-                    <div class="aba-meta">Transaction ID: {{ $payway_tran_id }}</div>
-                @endif
-
-                <div class="pos-bottom-grid" style="margin-top:1rem;">
-                    <button type="button" wire:click="refreshPaywayStatus" class="pos-confirm" style="margin-top:0;">
-                        Check payment status
-                    </button>
-                    <button type="button" wire:click="cancelQrPrompt" class="pos-btn">
-                        Cancel
-                    </button>
-                </div>
-            </div>
-        </div>
+            x-data
+            x-init="window.initPaywayCheckout?.(@js($this->payway_payload), @js($this->paywayPurchaseUrl), @js($payway_tran_id), @js($this->payway_payload_key))"
+            wire:ignore
+            wire:key="payway-{{ $this->payway_payload_key }}"
+            style="display:none;"
+        ></div>
     @endif
     </div>
-    <script src="https://checkout.payway.com.kh/plugins/checkout2-0.js" defer></script>
+    @once
+        <script>
+        window.initPaywayCheckout = function (payload, purchaseUrl, tranId, attemptKey) {
+            if (!payload || typeof payload !== 'object' || !tranId) {
+                return;
+            }
+
+            window.__paywayCheckoutInitiated = window.__paywayCheckoutInitiated || {};
+            const guardKey = attemptKey ? `${tranId}-${attemptKey}` : tranId;
+            if (window.__paywayCheckoutInitiated[guardKey]) {
+                return;
+            }
+            window.__paywayCheckoutInitiated[guardKey] = true;
+
+                const startCheckout = function () {
+                    if (typeof AbaPayway === 'undefined') {
+                        return false;
+                    }
+
+                    const checkoutPayload = Object.assign({}, payload, { form_url: purchaseUrl });
+                    Object.defineProperty(checkoutPayload, 'onSuccess', {
+                        value: function () {
+                            if (window.Livewire?.dispatch) {
+                                window.Livewire.dispatch('payment-success', { tranId: tranId });
+                            }
+                        },
+                        enumerable: false,
+                    });
+                    Object.defineProperty(checkoutPayload, 'onError', {
+                        value: function (response) {
+                            console.error('PayWay Error:', response);
+                            if (window.Livewire?.dispatch) {
+                                let message = '';
+                                if (response && typeof response === 'object') {
+                                    message = response.message || response.msg || response.error || '';
+                                } else if (typeof response === 'string') {
+                                    message = response;
+                                }
+                                window.Livewire.dispatch('payway-error', { message: message });
+                            }
+                        },
+                        enumerable: false,
+                    });
+                    AbaPayway.checkout(checkoutPayload);
+
+                    return true;
+                };
+
+                if (startCheckout()) {
+                    return;
+                }
+
+                let tries = 0;
+                const timer = setInterval(function () {
+                    tries += 1;
+                    if (startCheckout() || tries > 50) {
+                        clearInterval(timer);
+                    }
+                }, 100);
+            };
+        </script>
+    @endonce
+    <script src="{{ $this->paywayScriptUrl }}" defer></script>
 </x-filament-panels::page>

@@ -52,7 +52,11 @@ return [
         'api_key' => env('PAYWAY_API_KEY'),
         'currency' => env('PAYWAY_CURRENCY', 'USD'),
         'return_url' => env('PAYWAY_RETURN_URL'),
+        'status_url' => env('PAYWAY_STATUS_URL'),
+        'cancel_url' => env('PAYWAY_CANCEL_URL'),
         'payment_option' => env('PAYWAY_PAYMENT_OPTION'),
+        'checkout_script_url' => env('PAYWAY_CHECKOUT_SCRIPT_URL'),
+        'hash_fields' => env('PAYWAY_HASH_FIELDS'),
     ],
 
 ];

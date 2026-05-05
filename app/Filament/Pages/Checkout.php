@@ -34,6 +34,8 @@ class Checkout extends Page
     public ?string $payway_status = null;
     public ?string $payway_apv = null;
     public array $payway_payload = [];
+    public string $payway_payload_key = '';
+    public ?string $payway_error = null;
 
     public function mount(): void
     {
@@ -233,6 +235,28 @@ class Checkout extends Page
         $this->refreshPaywayStatus();
     }
 
+    #[\Livewire\Attributes\On('payway-error')]
+    public function onPaywayError($payload = null): void
+    {
+        $message = '';
+        if (is_array($payload)) {
+            $message = (string) ($payload['message'] ?? $payload['error'] ?? $payload['msg'] ?? '');
+        } elseif (is_string($payload)) {
+            $message = $payload;
+        }
+
+        if ($message === '') {
+            $message = 'PayWay did not return a QR code.';
+        }
+
+        $this->payway_error = $message;
+
+        Notification::make()
+            ->title($message)
+            ->danger()
+            ->send();
+    }
+
     public function getAbaTopupTemplateUrlProperty(): ?string
     {
         $url = trim((string) config('services.aba.topup_template_image_url'));
@@ -250,6 +274,11 @@ class Checkout extends Page
     public function getPaywayPurchaseUrlProperty(): string
     {
         return app(PaywayService::class)->purchaseUrl();
+    }
+
+    public function getPaywayScriptUrlProperty(): string
+    {
+        return app(PaywayService::class)->checkoutScriptUrl();
     }
 
     protected function startPaywayCheckout(?Payment $payment = null): void
@@ -292,9 +321,11 @@ class Checkout extends Page
         }
 
         $this->payway_payload = $this->buildPaywayPayload($tranId);
+        $this->payway_payload_key = (string) Str::uuid();
         $this->payway_tran_id = $tranId;
         $this->payway_status = $payment->payway_status;
         $this->payway_apv = $payment->payway_apv;
+        $this->payway_error = null;
         $this->showQrPrompt = true;
     }
 
@@ -306,21 +337,44 @@ class Checkout extends Page
         if ($paymentOption === '') {
             $paymentOption = 'abapay_khqr';
         }
+        $returnUrl = trim((string) config('services.payway.return_url'));
+        if ($returnUrl === '') {
+            $returnUrl = route('payway.return');
+        }
+        $statusUrl = trim((string) config('services.payway.status_url'));
+        $cancelUrl = trim((string) config('services.payway.cancel_url'));
+
+        $amount = number_format($this->total, 2, '.', '');
+        $itemName = (string) ($this->appointment?->service?->name ?? 'Salon services');
+        $items = [
+            [
+                'name' => $itemName !== '' ? $itemName : 'Salon services',
+                'quantity' => 1,
+                'price' => (float) $amount,
+            ],
+        ];
 
         $payload = [
             'req_time' => now()->format('YmdHis'),
             'merchant_id' => trim((string) config('services.payway.merchant_id')),
             'tran_id' => $tranId,
-            'amount' => number_format($this->total, 2, '.', ''),
+            'type' => 'purchase',
+            'amount' => $amount,
             'currency' => trim((string) config('services.payway.currency', 'USD')),
             'payment_option' => $paymentOption,
-            'return_url' => trim((string) config('services.payway.return_url')),
+            'items' => $items,
+            'shipping' => '0.00',
+            'tax' => '0.00',
+            'discount' => '0.00',
+            'return_url' => $returnUrl,
             'return_params' => 'appointment_id=' . $this->appointment?->id,
             'firstname' => $firstName,
             'lastname' => $lastName,
             'phone' => $client?->phone,
             'email' => $client?->email,
         ];
+        $payload['status_url'] = $statusUrl !== '' ? $statusUrl : $returnUrl;
+        $payload['cancel_url'] = $cancelUrl !== '' ? $cancelUrl : $returnUrl;
 
         return app(PaywayService::class)->buildPurchasePayload($payload);
     }
@@ -456,6 +510,7 @@ class Checkout extends Page
         $this->payway_status = $this->appointment?->payment?->payway_status;
         $this->payway_apv = $this->appointment?->payment?->payway_apv;
         $this->payway_payload = [];
+        $this->payway_payload_key = '';
     }
 
     protected function buildReceiptText(): string
