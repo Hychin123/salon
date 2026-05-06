@@ -37,6 +37,11 @@ class Checkout extends Page
     public string $payway_payload_key = '';
     public ?string $payway_error = null;
 
+    public static function shouldRegisterNavigation(): bool
+    {
+        return auth()->user()?->can('page_Checkout') ?? false;
+    }
+
     public function mount(): void
     {
         $this->appointment_id = request()->integer('appointment');

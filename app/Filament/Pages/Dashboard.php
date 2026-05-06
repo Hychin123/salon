@@ -12,6 +12,11 @@ class Dashboard extends BaseDashboard
 {
     protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-home';
 
+    public static function shouldRegisterNavigation(): bool
+    {
+        return auth()->check();
+    }
+
     public function getWidgets(): array
     {
         return [

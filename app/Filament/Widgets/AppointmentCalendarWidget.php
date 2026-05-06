@@ -15,6 +15,11 @@ class AppointmentCalendarWidget extends FullCalendarWidget
         'xl' => 2,
     ];
 
+    public static function canView(): bool
+    {
+        return auth()->user()?->can('view_any_appointment') ?? false;
+    }
+
     public function onDateSelect(string $start, ?string $end, bool $allDay, ?array $view, ?array $resource): void
     {
         $this->dispatch('dashboard-date-selected', date: Carbon::parse($start)->toDateString());
@@ -31,13 +36,19 @@ class AppointmentCalendarWidget extends FullCalendarWidget
 
     public function fetchEvents(array $fetchInfo): array
     {
-        return Appointment::with(['client', 'staff', 'service'])
+        $query = Appointment::with(['client', 'staff', 'service'])
             ->whereBetween('appt_date', [
                 Carbon::parse($fetchInfo['start'])->toDateString(),
                 Carbon::parse($fetchInfo['end'])->toDateString(),
             ])
-            ->whereNotIn('status', ['cancelled'])
-            ->get()
+            ->whereNotIn('status', ['cancelled']);
+
+        $user = auth()->user();
+        if ($user?->hasAnyRole(['therapist', 'stylist'])) {
+            $query->whereHas('staff', fn ($q) => $q->where('user_id', $user->id));
+        }
+
+        return $query->get()
             ->map(function ($appt) {
                 $baseDate = Carbon::parse($appt->appt_date);
 

@@ -21,6 +21,11 @@ class ServiceResource extends Resource
     protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-sparkles';
     protected static ?string $navigationLabel = 'Services';
 
+    public static function shouldRegisterNavigation(): bool
+    {
+        return static::canViewAny();
+    }
+
     public static function form(Schema $schema): Schema
     {
         return $schema

@@ -19,6 +19,11 @@ class SelectedDateAppointmentsWidget extends Widget
 
     public string $selectedDate;
 
+    public static function canView(): bool
+    {
+        return auth()->user()?->can('view_any_appointment') ?? false;
+    }
+
     public function mount(): void
     {
         $this->selectedDate = now()->toDateString();
@@ -32,12 +37,18 @@ class SelectedDateAppointmentsWidget extends Widget
 
     protected function getViewData(): array
     {
-        $appointments = Appointment::query()
+        $query = Appointment::query()
             ->with(['client', 'service', 'staff'])
             ->whereDate('appt_date', $this->selectedDate)
             ->whereNotIn('status', ['cancelled'])
-            ->orderBy('start_time')
-            ->get();
+            ->orderBy('start_time');
+
+        $user = auth()->user();
+        if ($user?->hasAnyRole(['therapist', 'stylist'])) {
+            $query->whereHas('staff', fn ($q) => $q->where('user_id', $user->id));
+        }
+
+        $appointments = $query->get();
 
         return [
             'selectedDateLabel' => \Carbon\Carbon::parse($this->selectedDate)->format('M d, Y'),

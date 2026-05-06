@@ -3,6 +3,7 @@
 namespace App\Providers\Filament;
 
 use App\Filament\Pages\Dashboard;
+use BezhanSalleh\FilamentShield\FilamentShieldPlugin;
 use App\Filament\Widgets\AppointmentCalendarWidget;
 use App\Filament\Widgets\StatsOverviewWidget;
 use Filament\Http\Middleware\Authenticate;
@@ -49,7 +50,8 @@ class AdminPanelProvider extends PanelProvider
             ->plugin(
                 FilamentFullCalendarPlugin::make()
                     ->selectable()
-                    ->editable()
+                    ->editable(),
+                FilamentShieldPlugin::make()
             )
             ->middleware([
                 EncryptCookies::class,
@@ -61,6 +63,9 @@ class AdminPanelProvider extends PanelProvider
                 SubstituteBindings::class,
                 DisableBladeIconComponents::class,
                 DispatchServingFilamentEvent::class,
+            ])
+            ->plugins([
+                FilamentShieldPlugin::make(),
             ])
             ->authMiddleware([
                 Authenticate::class,

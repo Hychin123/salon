@@ -12,6 +12,11 @@ class StatsOverviewWidget extends BaseWidget
 {
     protected static ?int $sort = 1;
 
+    public static function canView(): bool
+    {
+        return auth()->user()?->hasAnyRole(['super_admin', 'manager', 'receptionist']) ?? false;
+    }
+
     protected function getStats(): array
     {
         $today = now()->toDateString();

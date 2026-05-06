@@ -13,6 +13,11 @@ class StaffScheduleMatrixWidget extends Widget
 
     protected static ?int $sort = 4;
 
+    public static function canView(): bool
+    {
+        return auth()->user()?->hasAnyRole(['super_admin', 'manager']) ?? false;
+    }
+
     protected function getViewData(): array
     {
         $days = [

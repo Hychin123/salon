@@ -14,6 +14,7 @@ use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 use Carbon\Carbon;
 
 class AppointmentResource extends Resource
@@ -21,6 +22,26 @@ class AppointmentResource extends Resource
     protected static ?string $model = Appointment::class;
     protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-calendar';
     protected static string|\UnitEnum|null $navigationGroup = 'Bookings';
+
+    public static function getEloquentQuery(): Builder
+    {
+        $query = parent::getEloquentQuery();
+        $user  = auth()->user();
+
+        // Therapist sees only their own appointments
+        if ($user->hasAnyRole(['therapist', 'stylist'])) {
+            $query->whereHas('staff', fn($q) =>
+                $q->where('user_id', $user->id)
+            );
+        }
+
+        return $query;
+    }
+
+    public static function shouldRegisterNavigation(): bool
+    {
+        return static::canViewAny();
+    }
 
     public static function form(Schema $schema): Schema
     {

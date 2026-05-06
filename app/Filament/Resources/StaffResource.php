@@ -5,6 +5,7 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\StaffResource\Pages;
 use App\Filament\Resources\StaffResource\RelationManagers\SchedulesRelationManager;
 use App\Models\Staff;
+use App\Models\User;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\DeleteBulkAction;
@@ -15,12 +16,19 @@ use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Spatie\Permission\Models\Role;
+use Illuminate\Support\Str;
 
 class StaffResource extends Resource
 {
     protected static ?string $model = Staff::class;
     protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-users';
     protected static ?string $navigationLabel = 'Staff';
+
+    public static function shouldRegisterNavigation(): bool
+    {
+        return static::canViewAny();
+    }
 
     public static function form(Schema $schema): Schema
     {
@@ -36,11 +44,8 @@ class StaffResource extends Resource
                             ->nullable()
                             ->maxLength(20),
                         Forms\Components\Select::make('role')
-                            ->options([
-                                'therapist' => 'Therapist',
-                                'stylist' => 'Stylist',
-                                'manager' => 'Manager',
-                            ])
+                            ->label('Role')
+                            ->options(fn () => Role::where('name', '!=', 'super_admin')->pluck('name', 'name'))
                             ->required(),
                         Forms\Components\TextInput::make('commission_rate')
                             ->numeric()
@@ -49,6 +54,33 @@ class StaffResource extends Resource
                             ->label('Commission Rate (%)'),
                         Forms\Components\Toggle::make('is_active')
                             ->default(true),
+                    ]),
+                Section::make('Login Account')
+                    ->schema([
+                        Forms\Components\TextInput::make('user_email')
+                            ->label('Email')
+                            ->email()
+                            ->required()
+                            ->maxLength(255)
+                            ->unique(
+                                table: User::class,
+                                column: 'email',
+                                ignorable: fn (?Staff $record) => $record?->user,
+                            ),
+                        Forms\Components\TextInput::make('user_password')
+                            ->label('Password')
+                            ->password()
+                            ->revealable()
+                            ->confirmed()
+                            ->minLength(8)
+                            ->required(fn (?Staff $record) => blank($record?->user))
+                            ->dehydrated(fn (?string $state) => filled($state)),
+                        Forms\Components\TextInput::make('user_password_confirmation')
+                            ->label('Confirm password')
+                            ->password()
+                            ->revealable()
+                            ->dehydrated(false)
+                            ->required(fn (?Staff $record) => blank($record?->user)),
                     ]),
                 Section::make('Services')
                     ->schema([
@@ -70,6 +102,15 @@ class StaffResource extends Resource
                     ->copyable(),
                 Tables\Columns\TextColumn::make('role')
                     ->badge()
+                    ->color(fn (string $state): string => match($state) {
+                        'manager' => 'success',
+                        'receptionist' => 'info',
+                        'therapist' => 'warning',
+                        'stylist' => 'warning',
+                        'super_admin' => 'danger',
+                        default => 'gray',
+                    })
+                    ->formatStateUsing(fn (string $state): string => Str::title(str_replace('_', ' ', $state)))
                     ->searchable()
                     ->sortable(),
                 Tables\Columns\TextColumn::make('commission_rate')

@@ -21,6 +21,11 @@ class RoomResource extends Resource
     protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-home-modern';
     protected static ?string $navigationLabel = 'Rooms';
 
+    public static function shouldRegisterNavigation(): bool
+    {
+        return static::canViewAny();
+    }
+
     public static function form(Schema $schema): Schema
     {
         return $schema

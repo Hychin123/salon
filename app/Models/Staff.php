@@ -3,8 +3,10 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Support\Str;
 
 class Staff extends Model
 {
@@ -16,6 +18,7 @@ class Staff extends Model
         'role',
         'commission_rate',
         'is_active',
+        'user_id',
     ];
 
     protected $casts = [
@@ -37,6 +40,21 @@ public function appointments()
 {
     return $this->hasMany(Appointment::class);
 }
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    public function roleModel(): BelongsTo
+    {
+        return $this->belongsTo(\Spatie\Permission\Models\Role::class, 'role', 'name');
+    }
+
+    public function getFormattedRoleAttribute(): string
+    {
+        return Str::title(str_replace('_', ' ', $this->role));
+    }
 
 public function isAvailableAt(string $date, string $time, int $durationMinutes): bool
 {
