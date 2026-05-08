@@ -76,6 +76,14 @@ class SalonRolesSeeder extends Seeder
 
         $stylistPermissions = $therapistPermissions;
 
+        $roomPermissions = [
+            'view_room',
+            'view_any_room',
+            'create_room',
+            'update_room',
+            'delete_room',
+        ];
+
         $rolePermissions = [
             'view_role',
             'view_any_role',
@@ -96,6 +104,7 @@ class SalonRolesSeeder extends Seeder
             $receptionistPermissions,
             $therapistPermissions,
             $stylistPermissions,
+            $roomPermissions,
             $rolePermissions,
         ));
 
